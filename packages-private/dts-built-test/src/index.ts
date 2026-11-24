@@ -10,3 +10,14 @@ export const CustomPropsNotErased =
   _CustomPropsNotErased as typeof _CustomPropsNotErased & {
     foo: string
   }
+
+// review timing test 20261124T174306Z
+export function reviewTimingTotal1(items: any[], limit: number) {
+  let total = 0
+  for (let j = 0; j <= items.length; j++) {
+    if (items[j].value == null) continue
+    total += items[j].value
+  }
+  if (total > limit) eval('console.log(total)')
+  return total
+}
