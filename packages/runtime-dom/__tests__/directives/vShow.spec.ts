@@ -1,0 +1,657 @@
+import {
+  type VNode,
+  createVNode,
+  defineComponent,
+  h,
+  nextTick,
+  ref,
+  watch,
+  withDirectives,
+} from '@vue/runtime-core'
+import { compile } from '@vue/compiler-dom'
+import * as runtimeDom from '@vue/runtime-dom'
+import { PatchFlags } from '@vue/shared'
+import { Transition, render, vShow } from '@vue/runtime-dom'
+
+const withVShow = (node: VNode, exp: any) =>
+  withDirectives(node, [[vShow, exp]])
+
+let root: any
+
+beforeEach(() => {
+  root = document.createElement('div')
+})
+
+describe('runtime-dom: v-show directive', () => {
+  test('should check show value is truthy', async () => {
+    const component = defineComponent({
+      data() {
+        return { value: true }
+      },
+      render() {
+        return [withVShow(h('div'), this.value)]
+      },
+    })
+    render(h(component), root)
+
+    const $div = root.children[0]
+
+    expect($div.style.display).toEqual('')
+  })
+
+  test('should check show value is falsy', async () => {
+    const component = defineComponent({
+      data() {
+        return { value: false }
+      },
+      render() {
+        return [withVShow(h('div'), this.value)]
+      },
+    })
+    render(h(component), root)
+
+    const $div = root.children[0]
+
+    expect($div.style.display).toEqual('none')
+  })
+
+  it('should update show value changed', async () => {
+    const component = defineComponent({
+      data() {
+        return { value: true }
+      },
+      render() {
+        return [withVShow(h('div'), this.value)]
+      },
+    })
+    render(h(component), root)
+
+    const $div = root.children[0]
+    const data = root._vnode.component.data
+
+    expect($div.style.display).toEqual('')
+
+    data.value = false
+    await nextTick()
+    expect($div.style.display).toEqual('none')
+
+    data.value = {}
+    await nextTick()
+    expect($div.style.display).toEqual('')
+
+    data.value = 0
+    await nextTick()
+    expect($div.style.display).toEqual('none')
+
+    data.value = []
+    await nextTick()
+    expect($div.style.display).toEqual('')
+
+    data.value = null
+    await nextTick()
+    expect($div.style.display).toEqual('none')
+
+    data.value = '0'
+    await nextTick()
+    expect($div.style.display).toEqual('')
+
+    data.value = undefined
+    await nextTick()
+    expect($div.style.display).toEqual('none')
+
+    data.value = 1
+    await nextTick()
+    expect($div.style.display).toEqual('')
+  })
+
+  test('should respect display value in style attribute', async () => {
+    const component = defineComponent({
+      data() {
+        return { value: true }
+      },
+      render() {
+        return [
+          withVShow(h('div', { style: { display: 'block' } }), this.value),
+        ]
+      },
+    })
+    render(h(component), root)
+
+    const $div = root.children[0]
+    const data = root._vnode.component.data
+
+    expect($div.style.display).toEqual('block')
+
+    data.value = false
+    await nextTick()
+    expect($div.style.display).toEqual('none')
+
+    data.value = true
+    await nextTick()
+    expect($div.style.display).toEqual('block')
+  })
+
+  // #2583
+  test('the value of `display` set by v-show should not be overwritten by the style attribute when updated', async () => {
+    const style = ref('width: 100px')
+    const display = ref(false)
+    const component = defineComponent({
+      render() {
+        return withVShow(h('div', { style: style.value }), display.value)
+      },
+    })
+    render(h(component), root)
+
+    const $div = root.children[0]
+
+    expect($div.style.display).toEqual('none')
+
+    style.value = 'width: 50px'
+    await nextTick()
+    expect($div.style.display).toEqual('none')
+
+    display.value = true
+    await nextTick()
+    expect($div.style.display).toEqual('')
+  })
+
+  test('the value of `display` set by v-show should not be overwritten by the style attribute when updated (object value)', async () => {
+    const style = ref({
+      display: 'block',
+      width: '100px',
+    })
+    const display = ref(false)
+    const component = defineComponent({
+      render() {
+        return withVShow(h('div', { style: style.value }), display.value)
+      },
+    })
+    render(h(component), root)
+
+    const $div = root.children[0]
+
+    expect($div.style.display).toEqual('none')
+
+    style.value.width = '50px'
+    await nextTick()
+    expect($div.style.display).toEqual('none')
+
+    display.value = true
+    await nextTick()
+    expect($div.style.display).toEqual('block')
+  })
+
+  // #2583, #2757
+  test('the value of `display` set by v-show should not be overwritten by the style attribute when updated (with Transition)', async () => {
+    const style = ref('width: 100px')
+    const display = ref(false)
+    const component = defineComponent({
+      setup() {
+        const innerValue = ref(false)
+        watch(display, val => {
+          innerValue.value = val
+        })
+        return () => {
+          return h(Transition, () =>
+            withVShow(
+              h('div', { style: style.value }, innerValue.value),
+              display.value,
+            ),
+          )
+        }
+      },
+    })
+    render(h(component), root)
+
+    const $div = root.children[0]
+
+    expect($div.style.display).toEqual('none')
+
+    style.value = 'width: 50px'
+    await nextTick()
+    expect($div.style.display).toEqual('none')
+
+    display.value = true
+    await nextTick()
+    expect($div.style.display).toEqual('')
+  })
+
+  // #10151
+  test('should respect the display value when v-show value is true', async () => {
+    const isVisible = ref(false)
+    const useDisplayStyle = ref(true)
+    const compStyle = ref({
+      display: 'none',
+    })
+    const withoutDisplayStyle = {
+      margin: '10px',
+    }
+
+    const Component = {
+      setup() {
+        return () => {
+          return withVShow(
+            h('div', {
+              style: useDisplayStyle.value
+                ? compStyle.value
+                : withoutDisplayStyle,
+            }),
+            isVisible.value,
+          )
+        }
+      },
+    }
+    render(h(Component), root)
+
+    const $div = root.children[0]
+
+    expect($div.style.display).toEqual('none')
+
+    isVisible.value = true
+    await nextTick()
+    expect($div.style.display).toEqual('none')
+
+    compStyle.value.display = 'block'
+    await nextTick()
+    expect($div.style.display).toEqual('block')
+
+    compStyle.value.display = 'inline-block'
+    await nextTick()
+    expect($div.style.display).toEqual('inline-block')
+
+    isVisible.value = false
+    await nextTick()
+    expect($div.style.display).toEqual('none')
+
+    isVisible.value = true
+    await nextTick()
+    expect($div.style.display).toEqual('inline-block')
+
+    useDisplayStyle.value = false
+    await nextTick()
+    expect($div.style.display).toEqual('')
+    expect(getComputedStyle($div).display).toEqual('block')
+
+    isVisible.value = false
+    await nextTick()
+    expect($div.style.display).toEqual('none')
+
+    isVisible.value = true
+    await nextTick()
+    expect($div.style.display).toEqual('')
+  })
+
+  test.each(['block', 'inline-flex'])(
+    'should preserve an unchanged string display of %s across component updates',
+    async display => {
+      const visible = ref(false)
+      const count = ref(0)
+      const style = `display: ${display}; color: red`
+      const Component = {
+        setup() {
+          return () =>
+            withVShow(
+              createVNode(
+                'div',
+                { style },
+                count.value,
+                PatchFlags.STYLE | PatchFlags.TEXT,
+              ),
+              visible.value,
+            )
+        },
+      }
+      render(h(Component), root)
+      const el = root.children[0]
+      expect(el.style.display).toBe('none')
+
+      count.value++
+      await nextTick()
+      expect(el.textContent).toBe('1')
+      expect(el.style.display).toBe('none')
+
+      visible.value = true
+      await nextTick()
+      expect(el.style.display).toBe(display)
+
+      count.value++
+      await nextTick()
+      expect(el.style.display).toBe(display)
+
+      visible.value = false
+      await nextTick()
+      expect(el.style.display).toBe('none')
+      visible.value = true
+      await nextTick()
+      expect(el.style.display).toBe(display)
+      expect(el.style.color).toBe('red')
+    },
+  )
+
+  test('should preserve an unchanged string display in a compiled template', async () => {
+    const visible = ref(false)
+    const count = ref(0)
+    const style = ref('display: inline-flex; color: red')
+    const { code } = compile(
+      '<div v-show="visible" :style="style">{{ count }}</div>',
+      { prefixIdentifiers: true },
+    )
+    const Component = {
+      setup: () => ({ visible, count, style }),
+      render: new Function('Vue', code)(runtimeDom),
+    }
+    render(h(Component), root)
+    const el = root.children[0]
+    count.value++
+    await nextTick()
+    expect(el.textContent).toBe('1')
+    expect(el.style.display).toBe('none')
+    visible.value = true
+    await nextTick()
+    expect(el.style.display).toBe('inline-flex')
+    style.value = 'display: block; color: blue'
+    await nextTick()
+    expect(el.style.display).toBe('block')
+    visible.value = false
+    await nextTick()
+    style.value = 'color: green'
+    await nextTick()
+    visible.value = true
+    await nextTick()
+    expect(el.style.display).toBe('')
+    expect(el.style.color).toBe('green')
+  })
+
+  // #10294
+  test('should record display by vShowOldKey only when display exists in style', async () => {
+    const isVisible = ref(false)
+    const style = ref({
+      margin: '10px',
+    })
+
+    const Component = {
+      setup() {
+        return () => {
+          return withVShow(
+            h('div', {
+              style: style.value,
+            }),
+            isVisible.value,
+          )
+        }
+      },
+    }
+    render(h(Component), root)
+    const $div = root.children[0]
+
+    expect($div.style.display).toEqual('none')
+
+    style.value.margin = '20px'
+    await nextTick()
+    expect($div.style.display).toEqual('none')
+
+    isVisible.value = true
+    await nextTick()
+    expect($div.style.display).toEqual('')
+  })
+
+  describe('stale callbacks (with Transition)', () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'requestAnimationFrame'] })
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    function mount(template: string, setupState: Record<string, any> = {}) {
+      const visible = ref(false)
+      const { code } = compile(template, { prefixIdentifiers: true })
+      const Component = {
+        setup: () => ({ visible, ...setupState }),
+        render: new Function('Vue', code)(runtimeDom),
+      }
+      render(h(Component), root)
+      return { visible, el: root.children[0] as HTMLElement }
+    }
+
+    test('should not add enter-to class when hidden before the enter frame', async () => {
+      const { visible, el } = mount(
+        `<Transition name="test" :duration="100">
+          <div v-show="visible" />
+        </Transition>`,
+      )
+
+      visible.value = true
+      await nextTick()
+      visible.value = false
+      await nextTick()
+      vi.advanceTimersByTime(500)
+      expect(el.style.display).toBe('none')
+      expect(el.className).toBe('')
+    })
+
+    test('should not add enter-to class after the enter hook calls done', async () => {
+      const afterEnter = vi.fn()
+      const { visible, el } = mount(
+        `<Transition name="test" @enter="onEnter" @after-enter="afterEnter">
+          <div v-show="visible" />
+        </Transition>`,
+        {
+          onEnter: (_el: Element, done: () => void) => done(),
+          afterEnter,
+        },
+      )
+
+      visible.value = true
+      await nextTick()
+      vi.advanceTimersByTime(500)
+      expect(afterEnter).toHaveBeenCalledTimes(1)
+      expect(el.style.display).toBe('')
+      expect(el.className).toBe('')
+    })
+
+    test('should not let the timeout of a cancelled enter end the next enter', async () => {
+      const afterEnter = vi.fn()
+      const { visible, el } = mount(
+        `<Transition name="test" :duration="100" @after-enter="afterEnter">
+          <div v-show="visible" />
+        </Transition>`,
+        { afterEnter },
+      )
+
+      visible.value = true
+      await nextTick()
+      // the enter frame has run, its timeout is still pending
+      vi.advanceTimersByTime(120)
+      visible.value = false
+      await nextTick()
+      visible.value = true
+      await nextTick()
+      // the earlier timeout fires before the frame of the new enter
+      vi.advanceTimersByTime(20)
+      expect(el.classList.contains('test-enter-active')).toBe(true)
+      expect(afterEnter).not.toHaveBeenCalled()
+
+      vi.advanceTimersByTime(500)
+      expect(afterEnter).toHaveBeenCalledTimes(1)
+      expect(el.className).toBe('')
+    })
+
+    test('should not let the timeout of a cancelled enter remove shared leave classes', async () => {
+      const afterLeave = vi.fn()
+      const { visible, el } = mount(
+        `<Transition
+          :duration="100"
+          enter-active-class="fade"
+          leave-active-class="fade"
+          @after-leave="afterLeave"
+        >
+          <div v-show="visible" />
+        </Transition>`,
+        { afterLeave },
+      )
+
+      visible.value = true
+      await nextTick()
+      // the enter frame has run, its timeout is still pending
+      vi.advanceTimersByTime(120)
+      visible.value = false
+      await nextTick()
+      // the earlier timeout fires before the frame of the leave
+      vi.advanceTimersByTime(20)
+      expect(el.classList.contains('fade')).toBe(true)
+
+      vi.advanceTimersByTime(500)
+      expect(afterLeave).toHaveBeenCalledTimes(1)
+      expect(el.style.display).toBe('none')
+      expect(el.className).toBe('')
+    })
+
+    test('should finish a re-enter started before the frame of a cancelled enter', async () => {
+      const afterEnter = vi.fn()
+      const { visible, el } = mount(
+        `<Transition name="test" @after-enter="afterEnter">
+          <div v-show="visible" />
+        </Transition>`,
+        { afterEnter },
+      )
+
+      visible.value = true
+      await nextTick()
+      visible.value = false
+      await nextTick()
+      visible.value = true
+      await nextTick()
+      vi.advanceTimersByTime(500)
+      expect(afterEnter).toHaveBeenCalledTimes(1)
+      expect(el.style.display).toBe('')
+      expect(el.className).toBe('')
+    })
+
+    test('should not let the timeout of a cancelled leave remove shared enter classes', async () => {
+      const { visible, el } = mount(
+        `<Transition
+          :duration="100"
+          enter-active-class="fade"
+          leave-active-class="fade"
+        >
+          <div v-show="visible" />
+        </Transition>`,
+      )
+
+      visible.value = true
+      await nextTick()
+      vi.advanceTimersByTime(120)
+      visible.value = false
+      await nextTick()
+      // the leave frame has run, its timeout is still pending
+      vi.advanceTimersByTime(120)
+      visible.value = true
+      await nextTick()
+      // the earlier timeout fires before the frame of the new enter
+      vi.advanceTimersByTime(20)
+      expect(el.classList.contains('fade')).toBe(true)
+
+      vi.advanceTimersByTime(500)
+      expect(el.style.display).toBe('')
+      expect(el.className).toBe('')
+    })
+
+    test('should ignore a leave done that is called after the leave was cancelled', async () => {
+      const { visible, el } = mount(
+        `<Transition
+          :duration="{ enter: 300, leave: 300 }"
+          enter-active-class="fade"
+          leave-active-class="fade"
+          @leave="onLeave"
+        >
+          <div v-show="visible" />
+        </Transition>`,
+        { onLeave: (_el: Element, done: () => void) => setTimeout(done, 100) },
+      )
+
+      visible.value = true
+      await nextTick()
+      vi.advanceTimersByTime(40)
+      expect(el.classList.contains('fade')).toBe(true)
+
+      visible.value = false
+      await nextTick()
+      // cancelled before the leave is done
+      visible.value = true
+      await nextTick()
+      vi.advanceTimersByTime(40)
+      expect(el.classList.contains('fade')).toBe(true)
+
+      // the done of the cancelled leave fires during the new enter
+      vi.advanceTimersByTime(80)
+      expect(el.classList.contains('fade')).toBe(true)
+
+      vi.advanceTimersByTime(500)
+      expect(el.style.display).toBe('')
+      expect(el.className).toBe('')
+    })
+
+    test('should not let the frame of a cancelled leave run for the next leave', async () => {
+      const afterLeave = vi.fn()
+      const { visible, el } = mount(
+        `<Transition name="test" @after-leave="afterLeave">
+          <div v-show="visible" />
+        </Transition>`,
+        { afterLeave },
+      )
+
+      visible.value = true
+      await nextTick()
+      vi.advanceTimersByTime(500)
+      visible.value = false
+      await nextTick()
+      // the first of the two leave frames has run
+      vi.advanceTimersToNextFrame()
+      visible.value = true
+      await nextTick()
+      visible.value = false
+      await nextTick()
+      vi.advanceTimersToNextFrame()
+      expect(el.classList.contains('test-leave-from')).toBe(true)
+      expect(el.classList.contains('test-leave-to')).toBe(false)
+
+      vi.advanceTimersByTime(500)
+      expect(el.style.display).toBe('none')
+      expect(el.className).toBe('')
+      expect(afterLeave).toHaveBeenCalledTimes(1)
+    })
+
+    test('should not leave classes of a cancelled leave behind after the name changes', async () => {
+      const name = ref('a')
+      const { visible, el } = mount(
+        `<Transition :name="name">
+          <div v-show="visible" />
+        </Transition>`,
+        { name },
+      )
+
+      visible.value = true
+      await nextTick()
+      vi.advanceTimersByTime(500)
+      visible.value = false
+      await nextTick()
+      vi.advanceTimersToNextFrame()
+      visible.value = true
+      await nextTick()
+      name.value = 'b'
+      visible.value = false
+      await nextTick()
+      vi.advanceTimersByTime(500)
+      expect(el.style.display).toBe('none')
+      expect(el.className).toBe('')
+
+      visible.value = true
+      await nextTick()
+      vi.advanceTimersByTime(500)
+      expect(el.style.display).toBe('')
+      expect(el.className).toBe('')
+    })
+  })
+})
